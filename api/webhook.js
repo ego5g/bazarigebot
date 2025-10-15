@@ -5,10 +5,8 @@ if (!token) {
   throw new Error("❌ BOT_TOKEN отсутствует в переменных окружения!");
 }
 
-// Создаём бота без polling
 const bot = new TelegramBot(token, { webHook: { port: 80 } });
 
-// Обработчик всех апдейтов Telegram
 export default async function handler(req, res) {
   if (req.method === "POST") {
     try {
@@ -16,7 +14,6 @@ export default async function handler(req, res) {
       const chatId = update.message?.chat?.id;
       const text = update.message?.text;
 
-      // Если это команда /start
       if (text === "/start") {
         await bot.sendMessage(chatId, "👋 Привет! Бот успешно работает на Vercel 🚀");
       } else if (text) {
@@ -30,7 +27,17 @@ export default async function handler(req, res) {
     }
   }
 
-  // GET-запрос — установка webhook
   if (req.method === "GET") {
     try {
-      const webhookUrl = `https://${process.
+      const webhookUrl = `https://${process.env.VERCEL_URL}/api/webhook`;
+      await bot.setWebHook(webhookUrl);
+      console.log(`✅ Webhook установлен: ${webhookUrl}`);
+      return res.status(200).send("Webhook установлен и бот активен ✅");
+    } catch (err) {
+      console.error("Ошибка установки webhook:", err);
+      return res.status(500).send("Ошибка webhook");
+    }
+  }
+
+  res.status(405).send("Method Not Allowed");
+}
