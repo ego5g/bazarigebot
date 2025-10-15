@@ -2,69 +2,35 @@ import TelegramBot from "node-telegram-bot-api";
 
 const token = process.env.BOT_TOKEN;
 if (!token) {
-  console.error("❌ Ошибка: BOT_TOKEN не задан в ENV");
-  throw new Error("BOT_TOKEN is missing");
+  throw new Error("❌ BOT_TOKEN отсутствует в переменных окружения!");
 }
 
-const bot = new TelegramBot(token);
+// Создаём бота без polling
+const bot = new TelegramBot(token, { webHook: { port: 80 } });
 
-let webhookSet = false;
-
-// Отправка уведомления админу при старте
-const adminChatId = process.env.ADMIN_CHAT_ID;
-if (adminChatId) {
-  (async () => {
-    try {
-      await bot.sendMessage(adminChatId, "🤖 Бот запущен и активен на Vercel!");
-      console.log("✅ Уведомление админу отправлено");
-    } catch (err) {
-      console.error("Ошибка при отправке уведомления админу:", err);
-    }
-  })();
-}
-
+// Обработчик всех апдейтов Telegram
 export default async function handler(req, res) {
-  try {
-    if (req.method === "POST") {
-      // Telegram шлёт update сюда
-      bot.processUpdate(req.body);
-      return res.status(200).send("ok");
-    }
+  if (req.method === "POST") {
+    try {
+      const update = req.body;
+      const chatId = update.message?.chat?.id;
+      const text = update.message?.text;
 
-    // При GET — проверка / установка webhook
-    if (!webhookSet && process.env.VERCEL_URL) {
-      try {
-        const info = await bot.getWebHookInfo();
-        const currentUrl = info.url || "";
-        const newUrl = `https://${process.env.VERCEL_URL}/api/webhook`;
-
-        if (currentUrl !== newUrl) {
-          await bot.setWebHook(newUrl);
-          console.log(`Webhook установлен: ${newUrl}`);
-        } else {
-          console.log(`Webhook уже установлен: ${currentUrl}`);
-        }
-        webhookSet = true;
-      } catch (err) {
-        console.error("Ошибка проверки/установки webhook:", err);
+      // Если это команда /start
+      if (text === "/start") {
+        await bot.sendMessage(chatId, "👋 Привет! Бот успешно работает на Vercel 🚀");
+      } else if (text) {
+        await bot.sendMessage(chatId, `Ты написал: ${text}`);
       }
+
+      return res.status(200).send("ok");
+    } catch (err) {
+      console.error("Ошибка обработки апдейта:", err);
+      return res.status(500).send("error");
     }
-
-    return res.status(200).send("Бот активен ✅");
-  } catch (err) {
-    console.error("Ошибка в handler webhook:", err);
-    return res.status(500).send("Internal Server Error");
   }
-}
 
-// Обработка сообщений
-bot.on("message", async (msg) => {
-  const chatId = msg.chat.id;
-  const text = msg.text?.trim().toLowerCase() || "";
-
-  if (text === "/start") {
-    await bot.sendMessage(chatId, "Привет! 🤖 Бот успешно работает на Vercel 🚀");
-  } else {
-    await bot.sendMessage(chatId, `Ты написал: ${msg.text}`);
-  }
-});
+  // GET-запрос — установка webhook
+  if (req.method === "GET") {
+    try {
+      const webhookUrl = `https://${process.
