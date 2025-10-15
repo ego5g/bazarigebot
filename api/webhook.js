@@ -2,48 +2,35 @@ import TelegramBot from "node-telegram-bot-api";
 
 const token = process.env.BOT_TOKEN;
 if (!token) {
-  throw new Error("BOT_TOKEN не задан в переменных окружения");
+  throw new Error("BOT_TOKEN не задан");
 }
 
-// создаём экземпляр бота без polling
 const bot = new TelegramBot(token);
-
 let webhookSet = false;
 
 export default async function handler(req, res) {
   if (req.method === "POST") {
-    // Telegram шлёт обновления сюда
-    try {
-      bot.processUpdate(req.body);
-    } catch (err) {
-      console.error("Ошибка обработки update:", err);
-    }
+    bot.processUpdate(req.body);
     return res.status(200).send("ok");
   }
 
-  // GET — можем установить webhook, если ещё не установлен
   if (!webhookSet && process.env.VERCEL_URL) {
     const url = `https://${process.env.VERCEL_URL}/api/webhook`;
-    try {
-      await bot.setWebHook(url);
-      console.log("Webhook установлен:", url);
-      webhookSet = true;
-    } catch (err) {
-      console.error("Ошибка установки webhook:", err);
-    }
+    await bot.setWebHook(url);
+    webhookSet = true;
+    console.log(`Webhook установлен: ${url}`);
   }
 
-  res.status(200).send("Бот на Vercel запущен");
+  res.status(200).send("Бот активен ✅");
 }
 
-// Пример обработки сообщений
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
-  const text = msg.text || "";
+  const text = msg.text?.toLowerCase() || "";
 
   if (text === "/start") {
-    await bot.sendMessage(chatId, "Привет! Бот работает через webhook на Vercel.");
+    await bot.sendMessage(chatId, "Привет! Бот работает на Vercel 🚀");
   } else {
-    await bot.sendMessage(chatId, `Ты написал: ${text}`);
+    await bot.sendMessage(chatId, `Ты написал: ${msg.text}`);
   }
 });
