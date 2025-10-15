@@ -1,12 +1,12 @@
 {
-  "name": "telegram-bot-render",
+  "name": "bazarige-bot",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "node-telegram-bot-api": "^0.61.0",
-    "dotenv": "^16.3.1"
+    "node-telegram-bot-api": "^0.64.0",
+    "dotenv": "^16.0.3"
   }
 }
