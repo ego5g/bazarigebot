@@ -1,37 +1,28 @@
+require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 
 const token = process.env.BOT_TOKEN;
+if (!token) {
+  console.error('❌ BOT_TOKEN не найден. Добавь его в .env файл');
+  process.exit(1);
+}
 
-// Создаем бота в webhook-режиме, без polling
-const bot = new TelegramBot(token, { webHook: true });
+// Создаём бота в режиме polling
+const bot = new TelegramBot(token, { polling: true });
 
-// Основная функция для Vercel
-module.exports = async (req, res) => {
-  try {
-    if (req.method === 'POST') {
-      const { body } = req;
+bot.onText(/\/start/, (msg) => {
+  const chatId = msg.chat.id;
+  bot.sendMessage(chatId, '👋 Привет, Егорик! Бот работает локально через polling!');
+});
 
-      // Проверяем наличие сообщения
-      if (body && body.message) {
-        const chatId = body.message.chat.id;
-        const text = body.message.text?.trim();
+bot.on('message', (msg) => {
+  const chatId = msg.chat.id;
+  const text = msg.text;
 
-        if (text === '/start') {
-          await bot.sendMessage(chatId, 'Привет, Егорик! 🤖 Бот работает!');
-        } else {
-          await bot.sendMessage(chatId, `Ты написал: ${text}`);
-        }
-      }
-
-      // Telegram требует ответ 200
-      res.status(200).json({ ok: true });
-    } else {
-      // GET-запрос (например, проверка состояния)
-      res.status(200).json({ status: 'Bot webhook active ✅' });
-    }
-  } catch (error) {
-    console.error('Ошибка обработки запроса:', error);
-    // Telegramу всегда нужен ответ 200
-    res.status(200).json({ ok: true });
+  // Игнорируем команду /start (чтобы не дублировать)
+  if (text && text !== '/start') {
+    bot.sendMessage(chatId, `Ты написал: ${text}`);
   }
-};
+});
+
+console.log('✅ Бот запущен локально (polling mode)');
