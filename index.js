@@ -60,6 +60,9 @@ bot.on('message', async (msg) => {
     if (ad.step === 'category') {
       if (!categories.flat().includes(text)) return;
       ad.category = text;
+
+      if (ad.prevStep === 'confirm') return previewAd(chatId, ad, userId);
+
       ad.prevStep = 'category';
       ad.step = 'photos';
       return bot.sendMessage(chatId, 'Отправьте от 1 до 5 фото одним сообщением:', backButton());
@@ -68,6 +71,8 @@ bot.on('message', async (msg) => {
     // --- ВВОД ЗАГОЛОВКА ---
     if (ad.step === 'title') {
       ad.title = text;
+      if (ad.prevStep === 'confirm') return previewAd(chatId, ad, userId);
+
       ad.prevStep = 'title';
       ad.step = 'description';
       return bot.sendMessage(chatId, 'Введите описание:', backButton());
@@ -76,6 +81,8 @@ bot.on('message', async (msg) => {
     // --- ВВОД ОПИСАНИЯ ---
     if (ad.step === 'description') {
       ad.description = text;
+      if (ad.prevStep === 'confirm') return previewAd(chatId, ad, userId);
+
       ad.prevStep = 'description';
       ad.step = 'price';
       return bot.sendMessage(chatId, 'Введите цену (или "договорная"):', backButton());
@@ -84,6 +91,8 @@ bot.on('message', async (msg) => {
     // --- ВВОД ЦЕНЫ ---
     if (ad.step === 'price') {
       ad.price = text.toLowerCase() === 'договорная' ? 'Договорная' : text;
+      if (ad.prevStep === 'confirm') return previewAd(chatId, ad, userId);
+
       ad.prevStep = 'price';
       if (msg.from.username) {
         ad.contact = `@${msg.from.username}`;
@@ -97,7 +106,7 @@ bot.on('message', async (msg) => {
     // --- ВВОД КОНТАКТА ---
     if (ad.step === 'contact') {
       ad.contact = text;
-      await previewAd(chatId, ad, userId);
+      return previewAd(chatId, ad, userId);
     }
   } catch (e) {
     console.error('message handler error', e);
@@ -113,6 +122,9 @@ bot.on('photo', async (msg) => {
     const ad = ads[userId];
     if (!ad || ad.step !== 'photos') return;
 
+    // если редактируем фото — очищаем старые
+    if (ad.prevStep === 'confirm') ad.photos = [];
+
     if (msg.media_group_id) {
       if (!pendingAlbums[msg.media_group_id]) pendingAlbums[msg.media_group_id] = [];
       pendingAlbums[msg.media_group_id].push(msg);
@@ -125,12 +137,16 @@ bot.on('photo', async (msg) => {
         ad.photos = photos;
         delete pendingAlbums[msg.media_group_id];
 
+        if (ad.prevStep === 'confirm') return previewAd(chatId, ad, userId);
+
         ad.prevStep = 'photos';
         ad.step = 'title';
         bot.sendMessage(chatId, 'Введите заголовок:', backButton());
       }, 600);
     } else {
       ad.photos = msg.photo.map(p => p.file_id).slice(0, 5);
+      if (ad.prevStep === 'confirm') return previewAd(chatId, ad, userId);
+
       ad.prevStep = 'photos';
       ad.step = 'title';
       bot.sendMessage(chatId, 'Введите заголовок:', backButton());
@@ -264,22 +280,24 @@ bot.on('callback_query', async (query) => {
 👤 <b>${ad.contact}</b>
       `;
       const sent = await bot.sendMediaGroup(target.chatId, ad.photos.map((p, i) => ({
-        type: 'photo',
-        media: p,
-        caption: i === ad.photos.length - 1 ? caption : undefined,
-        parse_mode: 'HTML',
-      })), { message_thread_id: target.threadId });
+  type: 'photo',
+  media: p,
+  caption: i === ad.photos.length - 1 ? caption : undefined,
+  parse_mode: 'HTML',
+})), { message_thread_id: target.threadId });
 
-      const mainMsgId = sent[sent.length - 1].message_id;
-      ad.messageId = mainMsgId;
-      await bot.sendMessage(target.chatId, '📢 Объявление опубликовано', {
-        message_thread_id: target.threadId,
-        reply_to_message_id: mainMsgId,
-      });
+// сохраняем id основного сообщения в топике (на случай дальнейшего редактирования/удаления)
+const mainMsgId = sent[sent.length - 1].message_id;
+ad.messageId = mainMsgId;
 
-      await bot.sendMessage(ownerId, `🎉 Ваше объявление опубликовано в категории ${ad.category}!`);
-      delete pendingAds[ownerId];
-      return;
+// НЕ отправляем дополнительное служебное сообщение в сам топик — убрано по требованию
+
+// уведомляем только автора через личный чат с ботом
+await bot.sendMessage(ownerId, `🎉 Ваше объявление опубликовано в категории ${ad.category}!`);
+
+delete pendingAds[ownerId];
+return;
+
     }
 
     // --- отклонение ---
