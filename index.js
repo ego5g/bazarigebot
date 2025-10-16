@@ -203,7 +203,6 @@ async function previewAd(chatId, ad, ownerId) {
   }
 }
 
-
 // === CALLBACKS ===
 bot.on('callback_query', async (query) => {
   try {
@@ -254,7 +253,9 @@ bot.on('callback_query', async (query) => {
       const ad = ads[ownerId];
       if (!ad) return;
 
+      // сохраняем в список ожидающих
       pendingAds[ownerId] = ad;
+
       const date = new Date().toLocaleString('ru-RU');
       const caption = `
 📅 <b>${date}</b>
@@ -264,19 +265,41 @@ bot.on('callback_query', async (query) => {
 💰 <b>${ad.price}</b>
 👤 <b>${ad.contact}</b>
       `;
+
+      // отправляем объявление модератору
       await bot.sendMediaGroup(MOD_CHAT_ID, ad.photos.map((p, i) => ({
         type: 'photo',
         media: p,
         caption: i === ad.photos.length - 1 ? caption : undefined,
         parse_mode: 'HTML',
       })));
+
       await bot.sendMessage(MOD_CHAT_ID, `🕵️ Новое объявление от ${ad.contact}`, {
         reply_markup: {
           inline_keyboard: [
-            [{ text: '✅ Одобрить', callback_data: `approve_${ownerId}` }, { text: '❌ Отклонить', callback_data: `reject_${ownerId}` }],
+            [
+              { text: '✅ Одобрить', callback_data: `approve_${ownerId}` },
+              { text: '❌ Отклонить', callback_data: `reject_${ownerId}` }
+            ],
           ],
         },
       });
+
+      // показываем пользователю статус в личке
+      const statusMsg = await bot.sendMessage(ownerId, '⏳ Статус: <b>На проверке</b>', { parse_mode: 'HTML' });
+      ads[ownerId].statusMessageId = statusMsg.message_id;
+      ads[ownerId].status = 'pending';
+
+      // очищаем предпросмотр у пользователя (если был)
+      if (ad.previewMsgId) {
+        try {
+          await bot.deleteMessage(ownerId, ad.previewMsgId);
+          delete ad.previewMsgId;
+        } catch (err) {
+          console.warn('Не удалось удалить предпросмотр:', err.message);
+        }
+      }
+
       return;
     }
 
@@ -289,22 +312,19 @@ bot.on('callback_query', async (query) => {
         return;
       }
 
-      // Удаляем предпросмотр, если объявление ещё не было опубликовано
+      // Удаляем предпросмотр
       if (ad.previewMessageIds && ad.previewMessageIds.length) {
         for (const msgId of ad.previewMessageIds) {
-          try {
-            await bot.deleteMessage(senderId, msgId);
-          } catch (e) {}
+          try { await bot.deleteMessage(senderId, msgId); } catch (e) {}
         }
       }
       if (ad.previewKeyboardMessageId) {
-        try {
-          await bot.deleteMessage(senderId, ad.previewKeyboardMessageId);
-        } catch (e) {}
+        try { await bot.deleteMessage(senderId, ad.previewKeyboardMessageId); } catch (e) {}
       }
 
       delete ads[ownerId];
       await bot.sendMessage(senderId, '🗑 Объявление удалено.');
+      if (ad.statusMessageId) delete ad.statusMessageId;
       return;
     }
 
@@ -313,6 +333,7 @@ bot.on('callback_query', async (query) => {
       const ownerId = data.split('_')[1];
       const ad = pendingAds[ownerId];
       if (!ad) return;
+
       const target = CATEGORY_TARGETS[ad.category];
       const date = new Date().toLocaleString('ru-RU');
       const caption = `
@@ -323,6 +344,7 @@ bot.on('callback_query', async (query) => {
 💰 <b>${ad.price}</b>
 👤 <b>${ad.contact}</b>
       `;
+
       const sent = await bot.sendMediaGroup(target.chatId, ad.photos.map((p, i) => ({
         type: 'photo',
         media: p,
@@ -333,8 +355,15 @@ bot.on('callback_query', async (query) => {
       const mainMsgId = sent[sent.length - 1].message_id;
       ad.messageId = mainMsgId;
 
-      // уведомляем только автора через личный чат с ботом
+      // уведомляем автора
       await bot.sendMessage(ownerId, `🎉 Ваше объявление опубликовано в категории ${ad.category}!`);
+      if (ad.statusMessageId) {
+        await bot.editMessageText('✅ Статус: <b>Опубликовано</b>', {
+          chat_id: ownerId,
+          message_id: ad.statusMessageId,
+          parse_mode: 'HTML',
+        });
+      }
 
       delete pendingAds[ownerId];
       return;
@@ -345,6 +374,13 @@ bot.on('callback_query', async (query) => {
       const ownerId = data.split('_')[1];
       delete pendingAds[ownerId];
       await bot.sendMessage(ownerId, '❌ Ваше объявление отклонено модератором.');
+      if (ads[ownerId]?.statusMessageId) {
+        await bot.editMessageText('❌ Статус: <b>Отклонено модератором</b>', {
+          chat_id: ownerId,
+          message_id: ads[ownerId].statusMessageId,
+          parse_mode: 'HTML',
+        });
+      }
       return;
     }
 
