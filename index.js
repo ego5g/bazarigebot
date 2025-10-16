@@ -169,7 +169,7 @@ async function previewAd(chatId, ad, ownerId) {
     const date = new Date().toLocaleString('ru-RU');
     const caption = `
 📅 <b>${date}</b>
-📦 <b>Категория:</b> ${ad.category}
+<b>Категория:</b> ${ad.category}
 📝 <b>${ad.title}</b>
 💬 ${ad.description}
 💰 <b>Цена:</b> ${ad.price}
@@ -324,52 +324,30 @@ if (data.startsWith('send_to_moderation_')) {
 }
 
 
-    // // --- удаление объявления ---
-if (data.startsWith('delete_ad_')) {
-  const ownerId = data.split('_')[2];
-  const ad = ads[ownerId];
-  if (!ad) {
-    await bot.sendMessage(senderId, '⚠️ Не удалось найти объявление для удаления.');
-    return;
-  }
+    // --- удаление объявления ---
+    if (data.startsWith('delete_ad_')) {
+      const ownerId = data.split('_')[2];
+      const ad = ads[ownerId];
+      if (!ad) {
+        await bot.sendMessage(senderId, '⚠️ Не удалось найти объявление для удаления.');
+        return;
+      }
 
-  // Удаляем из категории, если уже опубликовано
-  if (ad.messageId && ad.category && CATEGORY_TARGETS[ad.category]) {
-    const target = CATEGORY_TARGETS[ad.category];
-    try {
-      await bot.deleteMessage(target.chatId, ad.messageId);
-    } catch (err) {
-      console.warn('Не удалось удалить из категории:', err.message);
+      // Удаляем предпросмотр
+      if (ad.previewMessageIds && ad.previewMessageIds.length) {
+        for (const msgId of ad.previewMessageIds) {
+          try { await bot.deleteMessage(senderId, msgId); } catch (e) {}
+        }
+      }
+      if (ad.previewKeyboardMessageId) {
+        try { await bot.deleteMessage(senderId, ad.previewKeyboardMessageId); } catch (e) {}
+      }
+
+      delete ads[ownerId];
+      await bot.sendMessage(senderId, '🗑 Объявление удалено.');
+      if (ad.statusMessageId) delete ad.statusMessageId;
+      return;
     }
-  }
-
-  // Удаляем предпросмотр у пользователя
-  if (ad.previewMessageIds && ad.previewMessageIds.length) {
-    for (const msgId of ad.previewMessageIds) {
-      try {
-        await bot.deleteMessage(senderId, msgId);
-      } catch (e) {}
-    }
-  }
-  if (ad.previewKeyboardMessageId) {
-    try {
-      await bot.deleteMessage(senderId, ad.previewKeyboardMessageId);
-    } catch (e) {}
-  }
-
-  // Удаляем статусное сообщение, если было
-  if (ad.statusMessageId) {
-    try {
-      await bot.deleteMessage(senderId, ad.statusMessageId);
-    } catch (e) {}
-  }
-
-  delete ads[ownerId];
-
-  await bot.sendMessage(senderId, '🗑 Объявление удалено.');
-  return;
-}
-
 
     // --- одобрение ---
     if (data.startsWith('approve_')) {
