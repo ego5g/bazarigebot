@@ -162,6 +162,7 @@ bot.on('photo', async (msg) => {
 
 
 // === ПРЕДПРОСМОТР ===
+// === ПРЕДПРОСМОТР ===
 async function previewAd(chatId, ad, ownerId) {
   try {
     ad.step = 'confirm';
@@ -174,13 +175,18 @@ async function previewAd(chatId, ad, ownerId) {
 💰 <b>Цена:</b> ${ad.price}
 👤 <b>Контакт:</b> ${ad.contact}
     `;
-    await bot.sendMediaGroup(chatId, ad.photos.map((p, i) => ({
+
+    // отправляем медиа и сохраняем id сообщений (чтобы потом можно было удалить)
+    const sent = await bot.sendMediaGroup(chatId, ad.photos.map((p, i) => ({
       type: 'photo',
       media: p,
       caption: i === ad.photos.length - 1 ? caption : undefined,
       parse_mode: 'HTML',
     })));
-    await bot.sendMessage(chatId, '✅ Проверьте объявление перед отправкой:', {
+    ad.previewMessageIds = sent.map(m => m.message_id);
+
+    // потом отдельным сообщением отправляем текст с кнопками
+    const keyboardMsg = await bot.sendMessage(chatId, '✅ Проверьте объявление перед отправкой:', {
       reply_markup: {
         inline_keyboard: [
           [{ text: '🚀 Отправить на модерацию', callback_data: `send_to_moderation_${ownerId}` }],
@@ -188,10 +194,15 @@ async function previewAd(chatId, ad, ownerId) {
         ],
       },
     });
+
+    // сохраняем id этого сообщения
+    ad.previewKeyboardMessageId = keyboardMsg.message_id;
+
   } catch (e) {
     console.error('previewAd error', e);
   }
 }
+
 
 // === CALLBACKS ===
 bot.on('callback_query', async (query) => {
@@ -269,6 +280,34 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
+    // --- удаление объявления ---
+    if (data.startsWith('delete_ad_')) {
+      const ownerId = data.split('_')[2];
+      const ad = ads[ownerId];
+      if (!ad) {
+        await bot.sendMessage(senderId, '⚠️ Не удалось найти объявление для удаления.');
+        return;
+      }
+
+      // Удаляем предпросмотр, если объявление ещё не было опубликовано
+      if (ad.previewMessageIds && ad.previewMessageIds.length) {
+        for (const msgId of ad.previewMessageIds) {
+          try {
+            await bot.deleteMessage(senderId, msgId);
+          } catch (e) {}
+        }
+      }
+      if (ad.previewKeyboardMessageId) {
+        try {
+          await bot.deleteMessage(senderId, ad.previewKeyboardMessageId);
+        } catch (e) {}
+      }
+
+      delete ads[ownerId];
+      await bot.sendMessage(senderId, '🗑 Объявление удалено.');
+      return;
+    }
+
     // --- одобрение ---
     if (data.startsWith('approve_')) {
       const ownerId = data.split('_')[1];
@@ -285,24 +324,20 @@ bot.on('callback_query', async (query) => {
 👤 <b>${ad.contact}</b>
       `;
       const sent = await bot.sendMediaGroup(target.chatId, ad.photos.map((p, i) => ({
-  type: 'photo',
-  media: p,
-  caption: i === ad.photos.length - 1 ? caption : undefined,
-  parse_mode: 'HTML',
-})), { message_thread_id: target.threadId });
+        type: 'photo',
+        media: p,
+        caption: i === ad.photos.length - 1 ? caption : undefined,
+        parse_mode: 'HTML',
+      })), { message_thread_id: target.threadId });
 
-// сохраняем id основного сообщения в топике (на случай дальнейшего редактирования/удаления)
-const mainMsgId = sent[sent.length - 1].message_id;
-ad.messageId = mainMsgId;
+      const mainMsgId = sent[sent.length - 1].message_id;
+      ad.messageId = mainMsgId;
 
-// НЕ отправляем дополнительное служебное сообщение в сам топик — убрано по требованию
+      // уведомляем только автора через личный чат с ботом
+      await bot.sendMessage(ownerId, `🎉 Ваше объявление опубликовано в категории ${ad.category}!`);
 
-// уведомляем только автора через личный чат с ботом
-await bot.sendMessage(ownerId, `🎉 Ваше объявление опубликовано в категории ${ad.category}!`);
-
-delete pendingAds[ownerId];
-return;
-
+      delete pendingAds[ownerId];
+      return;
     }
 
     // --- отклонение ---
