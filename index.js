@@ -207,6 +207,7 @@ async function previewAd(chatId, ad, ownerId) {
 bot.on('callback_query', async (query) => {
   try {
     await bot.answerCallbackQuery(query.id);
+
     const data = query.data || '';
     const senderId = String(query.from.id);
 
@@ -247,61 +248,81 @@ bot.on('callback_query', async (query) => {
       }
     }
 
-    // --- отправка на модерацию ---
-    if (data.startsWith('send_to_moderation_')) {
-      const ownerId = data.split('_')[3];
-      const ad = ads[ownerId];
-      if (!ad) return;
+ // --- отправка на модерацию ---
+if (data.startsWith('send_to_moderation_')) {
+  const ownerId = data.split('_')[3];
+  const ad = ads[ownerId];
+  if (!ad) return;
 
-      // сохраняем в список ожидающих
-      pendingAds[ownerId] = ad;
+  // 🔹 Убираем кнопку "Отправить на модерацию", оставляем только "Изменить" и "Удалить"
+  if (ad.previewKeyboardMessageId) {
+    try {
+      await bot.editMessageReplyMarkup(
+        {
+          inline_keyboard: [
+            [
+              { text: '✏️ Изменить', callback_data: `edit_menu_${ownerId}` },
+              { text: '🗑️ Удалить', callback_data: `delete_ad_${ownerId}` },
+            ],
+          ],
+        },
+        { chat_id: ownerId, message_id: ad.previewKeyboardMessageId }
+      );
+    } catch (e) {
+      console.warn('Не удалось убрать кнопку отправки:', e.message);
+    }
+  }
 
-      const date = new Date().toLocaleString('ru-RU');
-      const caption = `
+  // 🔹 Добавляем статус "На проверке"
+  const statusMsg = await bot.sendMessage(ownerId, '🕓 Ваше объявление отправлено на модерацию. Статус: <b>На проверке</b>', { parse_mode: 'HTML' });
+  ad.statusMessageId = statusMsg.message_id;
+  ad.status = 'pending';
+
+  // 🔹 Сохраняем объявление в очередь на модерацию
+  pendingAds[ownerId] = ad;
+
+  const date = new Date().toLocaleString('ru-RU');
+  const caption = `
 📅 <b>${date}</b>
 📦 <b>${ad.category}</b>
 📝 <b>${ad.title}</b>
 💬 ${ad.description}
 💰 <b>${ad.price}</b>
 👤 <b>${ad.contact}</b>
-      `;
+  `;
 
-      // отправляем объявление модератору
-      await bot.sendMediaGroup(MOD_CHAT_ID, ad.photos.map((p, i) => ({
-        type: 'photo',
-        media: p,
-        caption: i === ad.photos.length - 1 ? caption : undefined,
-        parse_mode: 'HTML',
-      })));
+  // 🔹 Отправляем объявление модератору
+  await bot.sendMediaGroup(MOD_CHAT_ID, ad.photos.map((p, i) => ({
+    type: 'photo',
+    media: p,
+    caption: i === ad.photos.length - 1 ? caption : undefined,
+    parse_mode: 'HTML',
+  })));
 
-      await bot.sendMessage(MOD_CHAT_ID, `🕵️ Новое объявление от ${ad.contact}`, {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '✅ Одобрить', callback_data: `approve_${ownerId}` },
-              { text: '❌ Отклонить', callback_data: `reject_${ownerId}` }
-            ],
-          ],
-        },
-      });
+  await bot.sendMessage(MOD_CHAT_ID, `🕵️ Новое объявление от ${ad.contact}`, {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '✅ Одобрить', callback_data: `approve_${ownerId}` },
+          { text: '❌ Отклонить', callback_data: `reject_${ownerId}` },
+        ],
+      ],
+    },
+  });
 
-      // показываем пользователю статус в личке
-      const statusMsg = await bot.sendMessage(ownerId, '⏳ Статус: <b>На проверке</b>', { parse_mode: 'HTML' });
-      ads[ownerId].statusMessageId = statusMsg.message_id;
-      ads[ownerId].status = 'pending';
-
-      // очищаем предпросмотр у пользователя (если был)
-      if (ad.previewMsgId) {
-        try {
-          await bot.deleteMessage(ownerId, ad.previewMsgId);
-          delete ad.previewMsgId;
-        } catch (err) {
-          console.warn('Не удалось удалить предпросмотр:', err.message);
-        }
-      }
-
-      return;
+  // 🔹 Удаляем предпросмотр, если остался
+  if (ad.previewMsgId) {
+    try {
+      await bot.deleteMessage(ownerId, ad.previewMsgId);
+      delete ad.previewMsgId;
+    } catch (err) {
+      console.warn('Не удалось удалить предпросмотр:', err.message);
     }
+  }
+
+  return;
+}
+
 
     // --- удаление объявления ---
     if (data.startsWith('delete_ad_')) {
