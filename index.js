@@ -114,6 +114,7 @@ bot.on('message', async (msg) => {
 });
 
 // === ОБРАБОТКА ФОТО ===
+// === ОБРАБОТКА ФОТО ===
 const pendingAlbums = {};
 bot.on('photo', async (msg) => {
   try {
@@ -144,7 +145,10 @@ bot.on('photo', async (msg) => {
         bot.sendMessage(chatId, 'Введите заголовок:', backButton());
       }, 600);
     } else {
-      ad.photos = msg.photo.map(p => p.file_id).slice(0, 5);
+      // Берём только одно — самое большое фото
+      const photo = msg.photo[msg.photo.length - 1];
+      ad.photos = [photo.file_id];
+
       if (ad.prevStep === 'confirm') return previewAd(chatId, ad, userId);
 
       ad.prevStep = 'photos';
@@ -155,6 +159,7 @@ bot.on('photo', async (msg) => {
     console.error('photo handler error', e);
   }
 });
+
 
 // === ПРЕДПРОСМОТР ===
 async function previewAd(chatId, ad, ownerId) {
