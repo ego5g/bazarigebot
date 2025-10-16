@@ -16,10 +16,10 @@ const CATEGORY_TARGETS = {
 };
 
 // === ХРАНИЛИЩЕ ===
-const ads = {}; // объявления пользователей
-const pendingAds = {}; // объявления, отправленные на модерацию
+const ads = {}; // активные объявления пользователей
+const pendingAds = {}; // объявления на модерации
 
-// === ВСПОМОГАТЕЛЬНЫЕ КЛАВИАТУРЫ ===
+// === КЛАВИАТУРЫ ===
 function backButton() {
   return { reply_markup: { keyboard: [[{ text: '🔙 Назад' }]], resize_keyboard: true } };
 }
@@ -35,13 +35,13 @@ bot.onText(/\/start|\/create/i, (msg) => {
   bot.sendMessage(chatId, 'Выберите категорию:', categoryKeyboard());
 });
 
-// === ОБРАБОТКА ТЕКСТОВ ===
+// === ОБРАБОТКА ТЕКСТА ===
 bot.on('message', async (msg) => {
   try {
     const chatId = msg.chat.id;
     const userId = String(msg.from.id);
     const text = msg.text?.trim();
-    if (!ads[userId]) return;
+    if (!ads[userId] || msg.photo) return;
     const ad = ads[userId];
 
     if (text === '🔙 Назад') {
@@ -51,19 +51,21 @@ bot.on('message', async (msg) => {
         case 'category': return bot.sendMessage(chatId, 'Выберите категорию:', categoryKeyboard());
         case 'title': return bot.sendMessage(chatId, 'Введите заголовок:', backButton());
         case 'description': return bot.sendMessage(chatId, 'Введите описание:', backButton());
-        case 'price': return bot.sendMessage(chatId, 'Введите цену (или “договорная”):', backButton());
+        case 'price': return bot.sendMessage(chatId, 'Введите цену (или "договорная"):', backButton());
         case 'photos': return bot.sendMessage(chatId, 'Отправьте фото заново (1–5 шт):', backButton());
       }
     }
 
+    // --- ВЫБОР КАТЕГОРИИ ---
     if (ad.step === 'category') {
       if (!categories.flat().includes(text)) return;
       ad.category = text;
       ad.prevStep = 'category';
-      ad.step = 'title';
-      return bot.sendMessage(chatId, 'Введите заголовок:', backButton());
+      ad.step = 'photos';
+      return bot.sendMessage(chatId, 'Отправьте от 1 до 5 фото одним сообщением:', backButton());
     }
 
+    // --- ВВОД ЗАГОЛОВКА ---
     if (ad.step === 'title') {
       ad.title = text;
       ad.prevStep = 'title';
@@ -71,20 +73,28 @@ bot.on('message', async (msg) => {
       return bot.sendMessage(chatId, 'Введите описание:', backButton());
     }
 
+    // --- ВВОД ОПИСАНИЯ ---
     if (ad.step === 'description') {
       ad.description = text;
       ad.prevStep = 'description';
       ad.step = 'price';
-      return bot.sendMessage(chatId, 'Введите цену (или “договорная”):', backButton());
+      return bot.sendMessage(chatId, 'Введите цену (или "договорная"):', backButton());
     }
 
+    // --- ВВОД ЦЕНЫ ---
     if (ad.step === 'price') {
       ad.price = text.toLowerCase() === 'договорная' ? 'Договорная' : text;
       ad.prevStep = 'price';
-      ad.step = 'photos';
-      return bot.sendMessage(chatId, 'Отправьте от 1 до 5 фото одним сообщением:', backButton());
+      if (msg.from.username) {
+        ad.contact = `@${msg.from.username}`;
+        await previewAd(chatId, ad, userId);
+      } else {
+        ad.step = 'contact';
+        bot.sendMessage(chatId, 'Введите ваш контакт (телефон или Telegram):', backButton());
+      }
     }
 
+    // --- ВВОД КОНТАКТА ---
     if (ad.step === 'contact') {
       ad.contact = text;
       await previewAd(chatId, ad, userId);
@@ -115,23 +125,15 @@ bot.on('photo', async (msg) => {
         ad.photos = photos;
         delete pendingAlbums[msg.media_group_id];
 
-        if (msg.from.username) {
-          ad.contact = `@${msg.from.username}`;
-          await previewAd(chatId, ad, userId);
-        } else {
-          ad.step = 'contact';
-          bot.sendMessage(chatId, 'Введите ваш контакт (телефон или Telegram):', backButton());
-        }
+        ad.prevStep = 'photos';
+        ad.step = 'title';
+        bot.sendMessage(chatId, 'Введите заголовок:', backButton());
       }, 600);
     } else {
       ad.photos = msg.photo.map(p => p.file_id).slice(0, 5);
-      if (msg.from.username) {
-        ad.contact = `@${msg.from.username}`;
-        await previewAd(chatId, ad, userId);
-      } else {
-        ad.step = 'contact';
-        bot.sendMessage(chatId, 'Введите ваш контакт (телефон или Telegram):', backButton());
-      }
+      ad.prevStep = 'photos';
+      ad.step = 'title';
+      bot.sendMessage(chatId, 'Введите заголовок:', backButton());
     }
   } catch (e) {
     console.error('photo handler error', e);
@@ -161,7 +163,7 @@ async function previewAd(chatId, ad, ownerId) {
       reply_markup: {
         inline_keyboard: [
           [{ text: '🚀 Отправить на модерацию', callback_data: `send_to_moderation_${ownerId}` }],
-          [{ text: '✏️ Изменить', callback_data: `edit_ad_${ownerId}` }, { text: '🗑️ Удалить', callback_data: `delete_ad_${ownerId}` }],
+          [{ text: '✏️ Изменить', callback_data: `edit_menu_${ownerId}` }, { text: '🗑️ Удалить', callback_data: `delete_ad_${ownerId}` }],
         ],
       },
     });
@@ -170,20 +172,57 @@ async function previewAd(chatId, ad, ownerId) {
   }
 }
 
-// === CALLBACK QUERIES ===
+// === CALLBACKS ===
 bot.on('callback_query', async (query) => {
   try {
     await bot.answerCallbackQuery(query.id);
     const data = query.data || '';
     const senderId = String(query.from.id);
 
+    // --- меню редактирования ---
+    if (data.startsWith('edit_menu_')) {
+      const ownerId = data.split('_')[2];
+      const ad = ads[ownerId];
+      if (!ad) return;
+      return bot.sendMessage(senderId, 'Что вы хотите изменить?', {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📦 Категорию', callback_data: `edit_field_${ownerId}_category` }],
+            [{ text: '🖼 Фото', callback_data: `edit_field_${ownerId}_photos` }],
+            [{ text: '📝 Заголовок', callback_data: `edit_field_${ownerId}_title` }],
+            [{ text: '💬 Описание', callback_data: `edit_field_${ownerId}_description` }],
+            [{ text: '💰 Цену', callback_data: `edit_field_${ownerId}_price` }],
+            [{ text: '👤 Контакт', callback_data: `edit_field_${ownerId}_contact` }],
+          ],
+        },
+      });
+    }
+
+    // --- редактирование конкретного поля ---
+    if (data.startsWith('edit_field_')) {
+      const [, , ownerId, field] = data.split('_');
+      const ad = ads[ownerId];
+      if (!ad) return;
+      ad.step = field;
+      ad.prevStep = 'confirm';
+
+      switch (field) {
+        case 'category': return bot.sendMessage(senderId, 'Выберите новую категорию:', categoryKeyboard());
+        case 'photos': return bot.sendMessage(senderId, 'Отправьте новые фото (1–5 шт):', backButton());
+        case 'title': return bot.sendMessage(senderId, 'Введите новый заголовок:', backButton());
+        case 'description': return bot.sendMessage(senderId, 'Введите новое описание:', backButton());
+        case 'price': return bot.sendMessage(senderId, 'Введите новую цену:', backButton());
+        case 'contact': return bot.sendMessage(senderId, 'Введите новый контакт:', backButton());
+      }
+    }
+
     // --- отправка на модерацию ---
     if (data.startsWith('send_to_moderation_')) {
-      const ownerId = data.split('_').slice(3).join('_');
+      const ownerId = data.split('_')[3];
       const ad = ads[ownerId];
-      if (!ad) return bot.answerCallbackQuery(query.id, { text: 'Ошибка: объявление не найдено.' });
-      pendingAds[ownerId] = ad;
+      if (!ad) return;
 
+      pendingAds[ownerId] = ad;
       const date = new Date().toLocaleString('ru-RU');
       const caption = `
 📅 <b>${date}</b>
@@ -202,10 +241,7 @@ bot.on('callback_query', async (query) => {
       await bot.sendMessage(MOD_CHAT_ID, `🕵️ Новое объявление от ${ad.contact}`, {
         reply_markup: {
           inline_keyboard: [
-            [
-              { text: '✅ Одобрить', callback_data: `approve_${ownerId}` },
-              { text: '❌ Отклонить', callback_data: `reject_${ownerId}` },
-            ],
+            [{ text: '✅ Одобрить', callback_data: `approve_${ownerId}` }, { text: '❌ Отклонить', callback_data: `reject_${ownerId}` }],
           ],
         },
       });
@@ -216,8 +252,7 @@ bot.on('callback_query', async (query) => {
     if (data.startsWith('approve_')) {
       const ownerId = data.split('_')[1];
       const ad = pendingAds[ownerId];
-      if (!ad) return bot.answerCallbackQuery(query.id, { text: 'Не найдено в очереди модерации.' });
-
+      if (!ad) return;
       const target = CATEGORY_TARGETS[ad.category];
       const date = new Date().toLocaleString('ru-RU');
       const caption = `
