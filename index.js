@@ -2,22 +2,58 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 
 // === НАСТРОЙКИ ===
-const token = process.env.BOT_TOKEN || 'ТОКЕН_ТВОЕГО_БОТА';
+const token = process.env.BOT_TOKEN;
+
+// ✅ ПРОВЕРКА ТОКЕНА
+if (!token) {
+  console.error('❌ ОШИБКА: BOT_TOKEN не найден в .env файле!');
+  process.exit(1);
+}
+
+console.log('✅ Токен бота загружен');
+console.log('🔧 Запуск бота...');
+
 const CHAT_ID = '@easymarket_ge';
-const MOD_CHAT_ID = '178060329';
-const bot = new TelegramBot(token, { polling: true });
+const MOD_CHAT_ID = process.env.MOD_CHAT_ID || '178060329';
+
+// ✅ ВАЖНО: Добавляем обработку ошибок при создании бота
+let bot;
+try {
+  bot = new TelegramBot(token, { 
+    polling: {
+      interval: 300,
+      autoStart: true,
+      params: {
+        timeout: 10
+      }
+    }
+  });
+  console.log('✅ Polling запущен');
+} catch (error) {
+  console.error('❌ Ошибка при создании бота:', error.message);
+  process.exit(1);
+}
+
+// ✅ Обработка ошибок polling
+bot.on('polling_error', (error) => {
+  console.error('❌ Polling error:', error.code, error.message);
+});
+
+bot.on('error', (error) => {
+  console.error('❌ Bot error:', error);
+});
 
 // === КАТЕГОРИИ / THREAD ID ===
 const categories = [['👩 Женское'], ['📱 Электроника'], ['🚗 Авто']];
 const CATEGORY_TARGETS = {
-  '👩 Женское': { chatId: CHAT_ID, threadId: 17 },
-  '📱 Электроника': { chatId: CHAT_ID, threadId: 9 },
-  '🚗 Авто': { chatId: CHAT_ID, threadId: 8 },
+  '👩 Женское': { chatId: CHAT_ID, threadId: 17, username: 'easymarket_ge' },
+  '📱 Электроника': { chatId: CHAT_ID, threadId: 9, username: 'easymarket_ge' },
+  '🚗 Авто': { chatId: CHAT_ID, threadId: 8, username: 'easymarket_ge' },
 };
 
 // === ХРАНИЛИЩЕ ===
-const ads = {}; // активные объявления пользователей
-const pendingAds = {}; // объявления на модерации
+const ads = {};
+const pendingAds = {};
 
 // === КЛАВИАТУРЫ ===
 function backButton() {
@@ -29,6 +65,7 @@ function categoryKeyboard() {
 
 // === /start ===
 bot.onText(/\/start|\/create/i, (msg) => {
+  console.log('📨 Получена команда /start от', msg.from.username || msg.from.id);
   const chatId = msg.chat.id;
   const userId = String(msg.from.id);
   ads[userId] = { step: 'category', prevStep: null, photos: [] };
@@ -38,9 +75,16 @@ bot.onText(/\/start|\/create/i, (msg) => {
 // === ОБРАБОТКА ТЕКСТА ===
 bot.on('message', async (msg) => {
   try {
+    // ✅ Игнорируем команды (они обрабатываются отдельно)
+    if (msg.text && msg.text.startsWith('/')) return;
+    
     const chatId = msg.chat.id;
     const userId = String(msg.from.id);
     const text = msg.text?.trim();
+    
+    // ✅ Логирование входящих сообщений
+    console.log('📩 Сообщение от', msg.from.username || userId, ':', text || '[фото]');
+    
     if (!ads[userId] || msg.photo) return;
     const ad = ads[userId];
 
@@ -60,6 +104,7 @@ bot.on('message', async (msg) => {
     if (ad.step === 'category') {
       if (!categories.flat().includes(text)) return;
       ad.category = text;
+      console.log('✅ Категория выбрана:', text);
 
       if (ad.prevStep === 'confirm') return previewAd(chatId, ad, userId);
 
@@ -71,6 +116,7 @@ bot.on('message', async (msg) => {
     // --- ВВОД ЗАГОЛОВКА ---
     if (ad.step === 'title') {
       ad.title = text;
+      console.log('✅ Заголовок:', text);
       if (ad.prevStep === 'confirm') return previewAd(chatId, ad, userId);
 
       ad.prevStep = 'title';
@@ -81,6 +127,7 @@ bot.on('message', async (msg) => {
     // --- ВВОД ОПИСАНИЯ ---
     if (ad.step === 'description') {
       ad.description = text;
+      console.log('✅ Описание:', text);
       if (ad.prevStep === 'confirm') return previewAd(chatId, ad, userId);
 
       ad.prevStep = 'description';
@@ -91,6 +138,7 @@ bot.on('message', async (msg) => {
     // --- ВВОД ЦЕНЫ ---
     if (ad.step === 'price') {
       ad.price = text.toLowerCase() === 'договорная' ? 'Договорная' : text;
+      console.log('✅ Цена:', ad.price);
       if (ad.prevStep === 'confirm') return previewAd(chatId, ad, userId);
 
       ad.prevStep = 'price';
@@ -106,14 +154,14 @@ bot.on('message', async (msg) => {
     // --- ВВОД КОНТАКТА ---
     if (ad.step === 'contact') {
       ad.contact = text;
+      console.log('✅ Контакт:', text);
       return previewAd(chatId, ad, userId);
     }
   } catch (e) {
-    console.error('message handler error', e);
+    console.error('❌ message handler error', e);
   }
 });
 
-// === ОБРАБОТКА ФОТО ===
 // === ОБРАБОТКА ФОТО ===
 const pendingAlbums = {};
 bot.on('photo', async (msg) => {
@@ -121,7 +169,13 @@ bot.on('photo', async (msg) => {
     const userId = String(msg.from.id);
     const chatId = msg.chat.id;
     const ad = ads[userId];
-    if (!ad || ad.step !== 'photos') return;
+    
+    console.log('📸 Получено фото от', msg.from.username || userId);
+    
+    if (!ad || ad.step !== 'photos') {
+      console.log('⚠️ Фото игнорируется - неверный шаг');
+      return;
+    }
 
     // если редактируем фото — очищаем старые
     if (ad.prevStep === 'confirm') ad.photos = [];
@@ -138,6 +192,8 @@ bot.on('photo', async (msg) => {
         ad.photos = photos;
         delete pendingAlbums[msg.media_group_id];
 
+        console.log('✅ Альбом обработан:', photos.length, 'фото');
+
         if (ad.prevStep === 'confirm') return previewAd(chatId, ad, userId);
 
         ad.prevStep = 'photos';
@@ -145,9 +201,9 @@ bot.on('photo', async (msg) => {
         bot.sendMessage(chatId, 'Введите заголовок:', backButton());
       }, 600);
     } else {
-      // Берём только одно — самое большое фото
       const photo = msg.photo[msg.photo.length - 1];
       ad.photos = [photo.file_id];
+      console.log('✅ Одно фото обработано');
 
       if (ad.prevStep === 'confirm') return previewAd(chatId, ad, userId);
 
@@ -156,15 +212,14 @@ bot.on('photo', async (msg) => {
       bot.sendMessage(chatId, 'Введите заголовок:', backButton());
     }
   } catch (e) {
-    console.error('photo handler error', e);
+    console.error('❌ photo handler error', e);
   }
 });
 
-
-// === ПРЕДПРОСМОТР ===
 // === ПРЕДПРОСМОТР ===
 async function previewAd(chatId, ad, ownerId) {
   try {
+    console.log('👀 Генерация предпросмотра для', ownerId);
     ad.step = 'confirm';
     const date = new Date().toLocaleString('ru-RU');
     const caption = `
@@ -174,9 +229,8 @@ async function previewAd(chatId, ad, ownerId) {
 💬 ${ad.description}
 💰 <b>Цена:</b> ${ad.price}
 👤 <b>Контакт:</b> ${ad.contact}
-    `;
+    `.trim();
 
-    // отправляем медиа и сохраняем id сообщений (чтобы потом можно было удалить)
     const sent = await bot.sendMediaGroup(chatId, ad.photos.map((p, i) => ({
       type: 'photo',
       media: p,
@@ -185,7 +239,6 @@ async function previewAd(chatId, ad, ownerId) {
     })));
     ad.previewMessageIds = sent.map(m => m.message_id);
 
-    // потом отдельным сообщением отправляем текст с кнопками
     const keyboardMsg = await bot.sendMessage(chatId, '✅ Проверьте объявление перед отправкой:', {
       reply_markup: {
         inline_keyboard: [
@@ -195,11 +248,11 @@ async function previewAd(chatId, ad, ownerId) {
       },
     });
 
-    // сохраняем id этого сообщения
     ad.previewKeyboardMessageId = keyboardMsg.message_id;
+    console.log('✅ Предпросмотр отправлен');
 
   } catch (e) {
-    console.error('previewAd error', e);
+    console.error('❌ previewAd error', e);
   }
 }
 
@@ -207,6 +260,7 @@ async function previewAd(chatId, ad, ownerId) {
 bot.on('callback_query', async (query) => {
   try {
     await bot.answerCallbackQuery(query.id);
+    console.log('🔘 Callback:', query.data);
 
     const data = query.data || '';
     const senderId = String(query.from.id);
@@ -230,7 +284,7 @@ bot.on('callback_query', async (query) => {
       });
     }
 
-    // --- редактирование конкретного поля ---
+    // --- редактирование поля ---
     if (data.startsWith('edit_field_')) {
       const [, , ownerId, field] = data.split('_');
       const ad = ads[ownerId];
@@ -248,92 +302,75 @@ bot.on('callback_query', async (query) => {
       }
     }
 
- // --- отправка на модерацию ---
-if (data.startsWith('send_to_moderation_')) {
-  const ownerId = data.split('_')[3];
-  const ad = ads[ownerId];
-  if (!ad) return;
+    // --- отправка на модерацию ---
+    if (data.startsWith('send_to_moderation_')) {
+      const ownerId = data.split('_')[3];
+      const ad = ads[ownerId];
+      if (!ad) return;
 
-  // 🔹 Убираем кнопку "Отправить на модерацию", оставляем только "Изменить" и "Удалить"
-  if (ad.previewKeyboardMessageId) {
-    try {
-      await bot.editMessageReplyMarkup(
-        {
-          inline_keyboard: [
-            [
-              { text: '✏️ Изменить', callback_data: `edit_menu_${ownerId}` },
-              { text: '🗑️ Удалить', callback_data: `delete_ad_${ownerId}` },
-            ],
-          ],
-        },
-        { chat_id: ownerId, message_id: ad.previewKeyboardMessageId }
-      );
-    } catch (e) {
-      console.warn('Не удалось убрать кнопку отправки:', e.message);
-    }
-  }
+      console.log('📤 Отправка на модерацию:', ownerId);
 
-  // 🔹 Добавляем статус "На проверке"
-  const statusMsg = await bot.sendMessage(ownerId, '🕓 Ваше объявление отправлено на модерацию. Статус: <b>На проверке</b>', { parse_mode: 'HTML' });
-  ad.statusMessageId = statusMsg.message_id;
-  ad.status = 'pending';
+      if (ad.previewKeyboardMessageId) {
+        try {
+          await bot.editMessageReplyMarkup(
+            {
+              inline_keyboard: [
+                [
+                  { text: '✏️ Изменить', callback_data: `edit_menu_${ownerId}` },
+                  { text: '🗑️ Удалить', callback_data: `delete_ad_${ownerId}` },
+                ],
+              ],
+            },
+            { chat_id: ownerId, message_id: ad.previewKeyboardMessageId }
+          );
+        } catch (e) {
+          console.warn('⚠️ Не удалось убрать кнопку:', e.message);
+        }
+      }
 
-  // 🔹 Сохраняем объявление в очередь на модерацию
-  pendingAds[ownerId] = ad;
+      const statusMsg = await bot.sendMessage(ownerId, '🕓 Ваше объявление отправлено на модерацию. Статус: <b>На проверке</b>', { parse_mode: 'HTML' });
+      ad.statusMessageId = statusMsg.message_id;
+      ad.status = 'pending';
+      pendingAds[ownerId] = ad;
 
-  const date = new Date().toLocaleString('ru-RU');
-  const caption = `
+      const date = new Date().toLocaleString('ru-RU');
+      const caption = `
 📅 <b>${date}</b>
 📦 <b>${ad.category}</b>
 📝 <b>${ad.title}</b>
 💬 ${ad.description}
 💰 <b>${ad.price}</b>
 👤 <b>${ad.contact}</b>
-  `;
+      `.trim();
 
-  // 🔹 Отправляем объявление модератору
-  await bot.sendMediaGroup(MOD_CHAT_ID, ad.photos.map((p, i) => ({
-    type: 'photo',
-    media: p,
-    caption: i === ad.photos.length - 1 ? caption : undefined,
-    parse_mode: 'HTML',
-  })));
+      await bot.sendMediaGroup(MOD_CHAT_ID, ad.photos.map((p, i) => ({
+        type: 'photo',
+        media: p,
+        caption: i === ad.photos.length - 1 ? caption : undefined,
+        parse_mode: 'HTML',
+      })));
 
-  await bot.sendMessage(MOD_CHAT_ID, `🕵️ Новое объявление от ${ad.contact}`, {
-    reply_markup: {
-      inline_keyboard: [
-        [
-          { text: '✅ Одобрить', callback_data: `approve_${ownerId}` },
-          { text: '❌ Отклонить', callback_data: `reject_${ownerId}` },
-        ],
-      ],
-    },
-  });
+      await bot.sendMessage(MOD_CHAT_ID, `🕵️ Новое объявление от ${ad.contact}`, {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '✅ Одобрить', callback_data: `approve_${ownerId}` },
+              { text: '❌ Отклонить', callback_data: `reject_${ownerId}` },
+            ],
+          ],
+        },
+      });
 
-  // 🔹 Удаляем предпросмотр, если остался
-  if (ad.previewMsgId) {
-    try {
-      await bot.deleteMessage(ownerId, ad.previewMsgId);
-      delete ad.previewMsgId;
-    } catch (err) {
-      console.warn('Не удалось удалить предпросмотр:', err.message);
+      console.log('✅ Отправлено модератору');
+      return;
     }
-  }
 
-  return;
-}
-
-
-    // --- удаление объявления ---
+    // --- удаление ---
     if (data.startsWith('delete_ad_')) {
       const ownerId = data.split('_')[2];
       const ad = ads[ownerId];
-      if (!ad) {
-        await bot.sendMessage(senderId, '⚠️ Не удалось найти объявление для удаления.');
-        return;
-      }
+      if (!ad) return;
 
-      // Удаляем предпросмотр
       if (ad.previewMessageIds && ad.previewMessageIds.length) {
         for (const msgId of ad.previewMessageIds) {
           try { await bot.deleteMessage(senderId, msgId); } catch (e) {}
@@ -345,7 +382,7 @@ if (data.startsWith('send_to_moderation_')) {
 
       delete ads[ownerId];
       await bot.sendMessage(senderId, '🗑 Объявление удалено.');
-      if (ad.statusMessageId) delete ad.statusMessageId;
+      console.log('🗑️ Объявление удалено:', ownerId);
       return;
     }
 
@@ -354,6 +391,8 @@ if (data.startsWith('send_to_moderation_')) {
       const ownerId = data.split('_')[1];
       const ad = pendingAds[ownerId];
       if (!ad) return;
+
+      console.log('✅ Одобрение объявления:', ownerId);
 
       const target = CATEGORY_TARGETS[ad.category];
       const date = new Date().toLocaleString('ru-RU');
@@ -364,7 +403,7 @@ if (data.startsWith('send_to_moderation_')) {
 💬 ${ad.description}
 💰 <b>${ad.price}</b>
 👤 <b>${ad.contact}</b>
-      `;
+      `.trim();
 
       const sent = await bot.sendMediaGroup(target.chatId, ad.photos.map((p, i) => ({
         type: 'photo',
@@ -374,28 +413,25 @@ if (data.startsWith('send_to_moderation_')) {
       })), { message_thread_id: target.threadId });
 
       const mainMsgId = sent[sent.length - 1].message_id;
-      ad.messageId = mainMsgId;
+      const postLink = `https://t.me/${target.username}/${mainMsgId}`;
 
-      // уведомляем автора
-const postLink = `https://t.me/${target.username || 'easymarket_ge'}/${mainMsgId}`;
+      await bot.sendMessage(
+        ownerId,
+        `🎉 Ваше объявление опубликовано в категории <b>${ad.category}</b>!\n\n` +
+        `🔗 <b>Ссылка:</b> ${postLink}`,
+        { parse_mode: 'HTML' }
+      );
 
-await bot.sendMessage(
-  ownerId,
-  `🎉 Ваше объявление опубликовано в категории <b>${ad.category}</b>!\n\n` +
-  `🔗 <b>Ссылка на объявление:</b> ${postLink}`,
-  { parse_mode: 'HTML' }
-);
-
-if (ad.statusMessageId) {
-  await bot.editMessageText('✅ Статус: <b>Опубликовано</b>', {
-    chat_id: ownerId,
-    message_id: ad.statusMessageId,
-    parse_mode: 'HTML',
-  });
-}
-
+      if (ad.statusMessageId) {
+        await bot.editMessageText('✅ Статус: <b>Опубликовано</b>', {
+          chat_id: ownerId,
+          message_id: ad.statusMessageId,
+          parse_mode: 'HTML',
+        });
+      }
 
       delete pendingAds[ownerId];
+      console.log('✅ Объявление опубликовано');
       return;
     }
 
@@ -405,18 +441,34 @@ if (ad.statusMessageId) {
       delete pendingAds[ownerId];
       await bot.sendMessage(ownerId, '❌ Ваше объявление отклонено модератором.');
       if (ads[ownerId]?.statusMessageId) {
-        await bot.editMessageText('❌ Статус: <b>Отклонено модератором</b>', {
+        await bot.editMessageText('❌ Статус: <b>Отклонено</b>', {
           chat_id: ownerId,
           message_id: ads[ownerId].statusMessageId,
           parse_mode: 'HTML',
         });
       }
+      console.log('❌ Объявление отклонено:', ownerId);
       return;
     }
 
   } catch (e) {
-    console.error('callback_query handler error', e);
+    console.error('❌ callback_query error', e);
   }
 });
 
-console.log('✅ Бот запущен и готов к работе...');
+// ✅ Проверка работоспособности
+bot.getMe().then(info => {
+  console.log('✅ Бот запущен успешно!');
+  console.log('👤 Имя бота:', info.username);
+  console.log('🆔 ID бота:', info.id);
+}).catch(err => {
+  console.error('❌ Не удалось получить информацию о боте:', err.message);
+  process.exit(1);
+});
+
+// ✅ Graceful shutdown
+process.on('SIGINT', () => {
+  console.log('\n⏹️ Остановка бота...');
+  bot.stopPolling();
+  process.exit(0);
+});
