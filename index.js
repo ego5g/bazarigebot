@@ -473,7 +473,7 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-import http from "http";
+const http = require('http');
 
 const PORT = process.env.PORT || 8080;
 
@@ -483,3 +483,4 @@ http.createServer((req, res) => {
 }).listen(PORT, () => {
   console.log(`🌐 Healthcheck server running on port ${PORT}`);
 });
+
